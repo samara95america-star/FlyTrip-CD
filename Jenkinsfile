@@ -16,7 +16,7 @@ pipeline {
 
     stages {
 
-        stage('1. Checkout CD Repository') {
+        stage('1. Checkout FlyTrip CD Repository') {
             steps {
                 checkout scm
             }
@@ -34,7 +34,7 @@ pipeline {
                         set -e
 
                         echo "=========================================="
-                        echo "VERIFYING TOOLS"
+                        echo "FLYTRIP CD - VERIFYING TOOLS"
                         echo "=========================================="
 
                         echo "Checking AWS CLI..."
@@ -58,7 +58,7 @@ pipeline {
             }
         }
 
-        stage('3. Connect to EKS') {
+        stage('3. Connect to FlyTrip EKS') {
             steps {
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
@@ -70,7 +70,7 @@ pipeline {
                         set -e
 
                         echo "=========================================="
-                        echo "CONNECTING TO EKS"
+                        echo "FLYTRIP - CONNECTING TO EKS"
                         echo "=========================================="
 
                         aws eks update-kubeconfig \
@@ -85,71 +85,87 @@ pipeline {
             }
         }
 
-        stage('4. Deploy Kubernetes Resources') {
+        stage('4. Deploy FlyTrip Kubernetes Resources') {
             steps {
                 sh '''
                     set -e
 
                     echo "=========================================="
-                    echo "DEPLOYING KUBERNETES RESOURCES"
+                    echo "FLYTRIP - DEPLOYING KUBERNETES RESOURCES"
                     echo "=========================================="
 
                     kubectl apply -f deployment.yaml
                     kubectl apply -f service.yaml
+
+                    echo ""
+                    echo "Kubernetes resources applied successfully."
                 '''
             }
         }
 
-        stage('5. Update Application Image') {
+        stage('5. Update FlyTrip Application Image') {
             steps {
                 sh '''
                     set -e
 
                     echo "=========================================="
-                    echo "UPDATING APPLICATION IMAGE"
+                    echo "FLYTRIP - UPDATING APPLICATION IMAGE"
                     echo "=========================================="
 
                     echo "Deploying image:"
                     echo "$IMAGE"
 
                     kubectl set image \
-                      deployment/restaurant-company \
-                      restaurant-company="$IMAGE"
+                      -f deployment.yaml \
+                      "*=$IMAGE"
+
+                    echo ""
+                    echo "Application image updated successfully."
                 '''
             }
         }
 
-        stage('6. Wait for Deployment') {
+        stage('6. Wait for FlyTrip Deployment') {
             steps {
                 sh '''
                     set -e
 
                     echo "=========================================="
-                    echo "WAITING FOR DEPLOYMENT"
+                    echo "FLYTRIP - WAITING FOR DEPLOYMENT"
                     echo "=========================================="
 
                     kubectl rollout status \
-                      deployment/restaurant-company \
+                      -f deployment.yaml \
                       --timeout=180s
                 '''
             }
         }
 
-        stage('7. Verify Deployment') {
+        stage('7. Verify FlyTrip Deployment') {
             steps {
                 sh '''
                     set -e
 
+                    echo "=========================================="
+                    echo "FLYTRIP - DEPLOYMENT VERIFICATION"
+                    echo "=========================================="
+
+                    echo ""
                     echo "========== PODS =========="
                     kubectl get pods -o wide
 
                     echo ""
-                    echo "========== DEPLOYMENT =========="
-                    kubectl get deployment restaurant-company
+                    echo "========== DEPLOYMENTS =========="
+                    kubectl get deployments
 
                     echo ""
-                    echo "========== SERVICE =========="
-                    kubectl get service restaurant-company-service
+                    echo "========== SERVICES =========="
+                    kubectl get services
+
+                    echo ""
+                    echo "=========================================="
+                    echo "FLYTRIP DEPLOYMENT VERIFIED"
+                    echo "=========================================="
                 '''
             }
         }
@@ -159,7 +175,7 @@ pipeline {
         success {
             echo '''
 ==========================================
-RESTAURANT COMPANY CD PASSED
+FLYTRIP CD PASSED
 Application deployed successfully to EKS
 ==========================================
 '''
@@ -168,8 +184,8 @@ Application deployed successfully to EKS
         failure {
             echo '''
 ==========================================
-DEPLOYMENT FAILED
-Check Jenkins console log for the exact error.
+FLYTRIP DEPLOYMENT FAILED
+Check the Jenkins console log for the exact error.
 ==========================================
 '''
         }
