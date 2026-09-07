@@ -5,7 +5,7 @@ pipeline {
         string(
             name: 'IMAGE_TAG',
             defaultValue: 'a1e43dd78f84f53e38c98c0c9fd2e26b37b06598',
-            description: 'Docker image tag from FlyTrip CI / ECR'
+            description: 'Docker image tag from FlyTrip-CI / ECR'
         )
     }
 
@@ -14,7 +14,6 @@ pipeline {
 
         AWS_ACCOUNT_ID = '584612873567'
         ECR_REPOSITORY = 'flytrip-ci'
-
         EKS_CLUSTER_NAME = 'fly-eks'
 
         IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
@@ -36,7 +35,7 @@ pipeline {
             steps {
                 sh '''
                     echo "=========================================="
-                    echo "Checking required tools"
+                    echo "Checking tools"
                     echo "=========================================="
 
                     echo "AWS CLI:"
@@ -51,7 +50,7 @@ pipeline {
                     ls -la
 
                     echo ""
-                    echo "Deployment files:"
+                    echo "Kubernetes files:"
                     ls -l deployment.yaml service.yaml
                 '''
             }
@@ -61,7 +60,7 @@ pipeline {
             steps {
                 sh '''
                     echo "=========================================="
-                    echo "AWS Authentication"
+                    echo "Checking AWS authentication"
                     echo "=========================================="
 
                     aws sts get-caller-identity \
@@ -77,13 +76,13 @@ pipeline {
                     echo "Checking Docker image in ECR"
                     echo "=========================================="
 
-                    echo "Repository:"
+                    echo "ECR Repository:"
                     echo "${ECR_REPOSITORY}"
 
-                    echo "Image tag:"
+                    echo "Image Tag:"
                     echo "${IMAGE_TAG}"
 
-                    echo "Full image:"
+                    echo "Full Image:"
                     echo "${IMAGE}"
 
                     aws ecr describe-images \
@@ -139,16 +138,21 @@ pipeline {
                     echo "Updating FlyTrip image"
                     echo "=========================================="
 
-                    echo "Deployment: ${DEPLOYMENT_NAME}"
-                    echo "Container: ${CONTAINER_NAME}"
-                    echo "Image: ${IMAGE}"
+                    echo "Deployment:"
+                    echo "${DEPLOYMENT_NAME}"
+
+                    echo "Container:"
+                    echo "${CONTAINER_NAME}"
+
+                    echo "Image:"
+                    echo "${IMAGE}"
 
                     kubectl set image \
                         deployment/${DEPLOYMENT_NAME} \
                         ${CONTAINER_NAME}=${IMAGE}
 
                     echo ""
-                    echo "Image update completed."
+                    echo "Image updated successfully."
                 '''
             }
         }
@@ -158,7 +162,7 @@ pipeline {
                 timeout(time: 5, unit: 'MINUTES') {
                     sh '''
                         echo "=========================================="
-                        echo "Waiting for rollout"
+                        echo "Waiting for Kubernetes rollout"
                         echo "=========================================="
 
                         kubectl rollout status \
@@ -166,7 +170,7 @@ pipeline {
                             --timeout=180s
 
                         echo ""
-                        echo "Rollout completed successfully."
+                        echo "Deployment completed successfully."
                     '''
                 }
             }
@@ -192,7 +196,7 @@ pipeline {
                     kubectl get service ${SERVICE_NAME}
 
                     echo ""
-                    echo "========== IMAGE =========="
+                    echo "========== CURRENT IMAGE =========="
                     kubectl get deployment ${DEPLOYMENT_NAME} \
                         -o jsonpath='{.spec.template.spec.containers[0].image}'
 
@@ -210,12 +214,14 @@ pipeline {
 FLYTRIP CD PASSED
 ==========================================
 
-FlyTrip has been successfully deployed
-to Amazon EKS.
+Application deployed successfully to EKS.
 
 EKS Cluster: fly-eks
 ECR Repository: flytrip-ci
 Image: ${IMAGE}
+Deployment: flytrip
+Service: flytrip-service
+
 ==========================================
 '''
         }
@@ -226,13 +232,8 @@ Image: ${IMAGE}
 FLYTRIP CD FAILED
 ==========================================
 
-Check:
-1. Jenkins AWS credentials
-2. ECR image/tag
-3. EKS cluster
-4. deployment.yaml
-5. service.yaml
-6. Kubernetes events
+Check Jenkins logs and Kubernetes events.
+
 ==========================================
 '''
         }
