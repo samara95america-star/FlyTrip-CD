@@ -1,26 +1,15 @@
 pipeline {
     agent any
 
-    parameters {
-        string(
-            name: 'IMAGE_TAG',
-            defaultValue: 'a1e43dd78f84f53e38c98c0c9fd2e26b37b06598',
-            description: 'Docker image tag from FlyTrip-CI / ECR'
-        )
-    }
-
     environment {
         AWS_REGION = 'us-east-1'
-
         AWS_ACCOUNT_ID = '584612873567'
         ECR_REPOSITORY = 'flytrip-ci'
         EKS_CLUSTER_NAME = 'fly-eks'
 
-        IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
+        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${env.PATH}"
 
-        DEPLOYMENT_NAME = 'flytrip'
-        CONTAINER_NAME = 'flytrip'
-        SERVICE_NAME = 'flytrip-service'
+        IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
     }
 
     stages {
@@ -34,24 +23,17 @@ pipeline {
         stage('2. Verify Tools') {
             steps {
                 sh '''
-                    echo "=========================================="
-                    echo "Checking tools"
-                    echo "=========================================="
-
-                    echo "AWS CLI:"
+                    echo "========== AWS CLI =========="
                     aws --version
 
-                    echo ""
-                    echo "kubectl:"
+                    echo "========== kubectl =========="
                     kubectl version --client
 
-                    echo ""
-                    echo "Repository files:"
+                    echo "========== Files =========="
                     ls -la
 
-                    echo ""
-                    echo "Kubernetes files:"
-                    ls -l deployment.yaml service.yaml
+                    echo "========== IMAGE =========="
+                    echo ${IMAGE}
                 '''
             }
         }
@@ -59,12 +41,11 @@ pipeline {
         stage('3. Verify AWS Connection') {
             steps {
                 sh '''
-                    echo "=========================================="
-                    echo "Checking AWS authentication"
-                    echo "=========================================="
+                    echo "========== AWS ACCOUNT =========="
+                    aws sts get-caller-identity
 
-                    aws sts get-caller-identity \
-                        --region ${AWS_REGION}
+                    echo "========== AWS REGION =========="
+                    aws configure get region || true
                 '''
             }
         }
@@ -72,26 +53,14 @@ pipeline {
         stage('4. Verify Image in ECR') {
             steps {
                 sh '''
-                    echo "=========================================="
-                    echo "Checking Docker image in ECR"
-                    echo "=========================================="
-
-                    echo "ECR Repository:"
-                    echo "${ECR_REPOSITORY}"
-
-                    echo "Image Tag:"
-                    echo "${IMAGE_TAG}"
-
-                    echo "Full Image:"
-                    echo "${IMAGE}"
+                    echo "========== ECR IMAGE =========="
 
                     aws ecr describe-images \
-                        --repository-name ${ECR_REPOSITORY} \
-                        --image-ids imageTag=${IMAGE_TAG} \
-                        --region ${AWS_REGION}
+                      --repository-name ${ECR_REPOSITORY} \
+                      --region ${AWS_REGION}
 
-                    echo ""
-                    echo "Image exists in ECR."
+                    echo "ECR repository:"
+                    echo ${ECR_REPOSITORY}
                 '''
             }
         }
@@ -99,16 +68,13 @@ pipeline {
         stage('5. Connect to EKS') {
             steps {
                 sh '''
-                    echo "=========================================="
-                    echo "Connecting to EKS"
-                    echo "=========================================="
+                    echo "========== CONNECTING TO EKS =========="
 
                     aws eks update-kubeconfig \
-                        --region ${AWS_REGION} \
-                        --name ${EKS_CLUSTER_NAME}
+                      --region ${AWS_REGION} \
+                      --name ${EKS_CLUSTER_NAME}
 
-                    echo ""
-                    echo "Testing Kubernetes connection..."
+                    echo "========== KUBERNETES NODES =========="
 
                     kubectl get nodes
                 '''
@@ -118,15 +84,10 @@ pipeline {
         stage('6. Deploy Kubernetes Resources') {
             steps {
                 sh '''
-                    echo "=========================================="
-                    echo "Applying Kubernetes resources"
-                    echo "=========================================="
+                    echo "========== DEPLOYING KUBERNETES =========="
 
                     kubectl apply -f deployment.yaml
                     kubectl apply -f service.yaml
-
-                    echo ""
-                    echo "Kubernetes resources applied."
                 '''
             }
         }
@@ -134,24 +95,13 @@ pipeline {
         stage('7. Update Application Image') {
             steps {
                 sh '''
-                    echo "=========================================="
-                    echo "Updating FlyTrip image"
-                    echo "=========================================="
-
-                    echo "Deployment:"
-                    echo "${DEPLOYMENT_NAME}"
-
-                    echo "Container:"
-                    echo "${CONTAINER_NAME}"
-
-                    echo "Image:"
-                    echo "${IMAGE}"
+                    echo "========== DEPLOYING IMAGE =========="
+                    echo ${IMAGE}
 
                     kubectl set image \
-                        deployment/${DEPLOYMENT_NAME} \
-                        ${CONTAINER_NAME}=${IMAGE}
+                      deployment/flytrip \
+                      flytrip=${IMAGE}
 
-                    echo ""
                     echo "Image updated successfully."
                 '''
             }
@@ -159,69 +109,44 @@ pipeline {
 
         stage('8. Wait for Deployment') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    sh '''
-                        echo "=========================================="
-                        echo "Waiting for Kubernetes rollout"
-                        echo "=========================================="
+                sh '''
+                    echo "========== WAITING FOR DEPLOYMENT =========="
 
-                        kubectl rollout status \
-                            deployment/${DEPLOYMENT_NAME} \
-                            --timeout=180s
-
-                        echo ""
-                        echo "Deployment completed successfully."
-                    '''
-                }
+                    kubectl rollout status \
+                      deployment/flytrip \
+                      --timeout=180s
+                '''
             }
         }
 
         stage('9. Verify Deployment') {
             steps {
                 sh '''
-                    echo "=========================================="
-                    echo "DEPLOYMENT VERIFICATION"
-                    echo "=========================================="
-
-                    echo ""
                     echo "========== PODS =========="
                     kubectl get pods -o wide
 
-                    echo ""
                     echo "========== DEPLOYMENT =========="
-                    kubectl get deployment ${DEPLOYMENT_NAME}
+                    kubectl get deployment flytrip
 
-                    echo ""
                     echo "========== SERVICE =========="
-                    kubectl get service ${SERVICE_NAME}
+                    kubectl get service flytrip-service
 
-                    echo ""
-                    echo "========== CURRENT IMAGE =========="
-                    kubectl get deployment ${DEPLOYMENT_NAME} \
-                        -o jsonpath='{.spec.template.spec.containers[0].image}'
+                    echo "========== IMAGE =========="
+                    kubectl get deployment flytrip \
+                      -o jsonpath='{.spec.template.spec.containers[0].image}'
 
-                    echo ""
+                    echo
                 '''
             }
         }
     }
 
     post {
-
         success {
             echo '''
 ==========================================
 FLYTRIP CD PASSED
-==========================================
-
-Application deployed successfully to EKS.
-
-EKS Cluster: fly-eks
-ECR Repository: flytrip-ci
-Image: ${IMAGE}
-Deployment: flytrip
-Service: flytrip-service
-
+Application deployed successfully to EKS
 ==========================================
 '''
         }
@@ -230,10 +155,7 @@ Service: flytrip-service
             echo '''
 ==========================================
 FLYTRIP CD FAILED
-==========================================
-
-Check Jenkins logs and Kubernetes events.
-
+Check the Jenkins stage that failed.
 ==========================================
 '''
         }
