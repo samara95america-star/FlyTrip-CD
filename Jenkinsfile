@@ -10,8 +10,8 @@ pipeline {
 
         IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
 
-        // AWS CLI installed on your Mac via Homebrew
-        PATH = "/opt/homebrew/bin:${env.PATH}"
+        // Make AWS CLI and kubectl available to Jenkins
+        PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
     }
 
     stages {
@@ -26,7 +26,9 @@ pipeline {
             steps {
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-credentials']
+                     credentialsId: 'aws-credentials',
+                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']
                 ]) {
                     sh '''
                         set -e
@@ -35,7 +37,6 @@ pipeline {
                         echo "VERIFYING TOOLS"
                         echo "=========================================="
 
-                        echo ""
                         echo "Checking AWS CLI..."
                         which aws
                         aws --version
@@ -50,13 +51,8 @@ pipeline {
                         kubectl version --client
 
                         echo ""
-                        echo "Checking Kubernetes manifests..."
+                        echo "Checking deployment files..."
                         ls -la
-
-                        echo ""
-                        echo "=========================================="
-                        echo "TOOLS OK"
-                        echo "=========================================="
                     '''
                 }
             }
@@ -66,7 +62,9 @@ pipeline {
             steps {
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-credentials']
+                     credentialsId: 'aws-credentials',
+                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']
                 ]) {
                     sh '''
                         set -e
@@ -75,22 +73,13 @@ pipeline {
                         echo "CONNECTING TO EKS"
                         echo "=========================================="
 
-                        aws sts get-caller-identity
-
-                        echo ""
-                        echo "Updating kubeconfig..."
-
                         aws eks update-kubeconfig \
-                            --region "${AWS_REGION}" \
-                            --name "${EKS_CLUSTER_NAME}"
+                          --region "$AWS_REGION" \
+                          --name "$EKS_CLUSTER_NAME"
 
                         echo ""
                         echo "Testing Kubernetes connection..."
-
                         kubectl get nodes
-
-                        echo ""
-                        echo "EKS CONNECTION OK"
                     '''
                 }
             }
@@ -98,59 +87,35 @@ pipeline {
 
         stage('4. Deploy Kubernetes Resources') {
             steps {
-                withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-credentials']
-                ]) {
-                    sh '''
-                        set -e
+                sh '''
+                    set -e
 
-                        echo "=========================================="
-                        echo "DEPLOYING KUBERNETES RESOURCES"
-                        echo "=========================================="
+                    echo "=========================================="
+                    echo "DEPLOYING KUBERNETES RESOURCES"
+                    echo "=========================================="
 
-                        echo ""
-                        echo "Applying deployment.yaml..."
-                        kubectl apply -f deployment.yaml
-
-                        echo ""
-                        echo "Applying service.yaml..."
-                        kubectl apply -f service.yaml
-
-                        echo ""
-                        echo "Kubernetes resources deployed."
-                    '''
-                }
+                    kubectl apply -f deployment.yaml
+                    kubectl apply -f service.yaml
+                '''
             }
         }
 
         stage('5. Update Application Image') {
             steps {
-                withCredentials([
-                    [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-credentials']
-                ]) {
-                    sh '''
-                        set -e
+                sh '''
+                    set -e
 
-                        echo "=========================================="
-                        echo "UPDATING APPLICATION IMAGE"
-                        echo "=========================================="
+                    echo "=========================================="
+                    echo "UPDATING APPLICATION IMAGE"
+                    echo "=========================================="
 
-                        echo "Image:"
-                        echo "${IMAGE}"
+                    echo "Deploying image:"
+                    echo "$IMAGE"
 
-                        echo ""
-                        echo "Updating deployment image..."
-
-                        kubectl set image \
-                            deployment/restaurant-company \
-                            restaurant-company="${IMAGE}"
-
-                        echo ""
-                        echo "Application image updated."
-                    '''
-                }
+                    kubectl set image \
+                      deployment/restaurant-company \
+                      restaurant-company="$IMAGE"
+                '''
             }
         }
 
@@ -164,11 +129,8 @@ pipeline {
                     echo "=========================================="
 
                     kubectl rollout status \
-                        deployment/restaurant-company \
-                        --timeout=180s
-
-                    echo ""
-                    echo "ROLLOUT COMPLETED"
+                      deployment/restaurant-company \
+                      --timeout=180s
                 '''
             }
         }
@@ -178,11 +140,6 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "=========================================="
-                    echo "VERIFYING DEPLOYMENT"
-                    echo "=========================================="
-
-                    echo ""
                     echo "========== PODS =========="
                     kubectl get pods -o wide
 
@@ -193,15 +150,6 @@ pipeline {
                     echo ""
                     echo "========== SERVICE =========="
                     kubectl get service restaurant-company-service
-
-                    echo ""
-                    echo "========== APPLICATION IMAGE =========="
-                    kubectl get deployment restaurant-company \
-                        -o jsonpath='{.spec.template.spec.containers[0].image}'
-
-                    echo ""
-                    echo ""
-                    echo "DEPLOYMENT VERIFICATION COMPLETED"
                 '''
             }
         }
@@ -212,9 +160,8 @@ pipeline {
             echo '''
 ==========================================
 RESTAURANT COMPANY CD PASSED
+Application deployed successfully to EKS
 ==========================================
-
-Application deployed successfully to EKS.
 '''
         }
 
@@ -222,9 +169,8 @@ Application deployed successfully to EKS.
             echo '''
 ==========================================
 DEPLOYMENT FAILED
+Check Jenkins console log for the exact error.
 ==========================================
-
-Check the Jenkins console log.
 '''
         }
     }
