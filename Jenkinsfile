@@ -10,7 +10,7 @@ pipeline {
         AWS_ACCOUNT_ID = '584612873567'
 
         // FlyTrip ECR
-        ECR_REPOSITORY = 'flytrip-cd'
+        ECR_REPOSITORY = 'flytrip-ci'
 
         // FlyTrip EKS
         EKS_CLUSTER_NAME = 'fly-eks'
@@ -252,7 +252,7 @@ deployed to Amazon EKS.
 
 Cluster: fly-eks
 Region:  us-east-1
-ECR:     flytrip-cd
+ECR:     flytrip-ci
 
 ==========================================
 '''
