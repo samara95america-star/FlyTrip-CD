@@ -8,7 +8,7 @@ pipeline {
         AWS_ACCOUNT_ID = '584612873567'
 
         ECR_REPOSITORY = 'flytrip-ci'
-        ECR_URI = '584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci:latest'
+        ECR_URI = '584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci'
 
         EKS_CLUSTER_NAME = 'fly-eks'
     }
@@ -147,7 +147,7 @@ pipeline {
 Jenkins Build Now completed successfully.
 
 ECR:
-584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci:latest
+584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci
 
 EKS:
 fly-eks
