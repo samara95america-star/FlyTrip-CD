@@ -2,65 +2,71 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = 'us-east-1'
-        AWS_ACCOUNT_ID = '584612873567'
-        ECR_REPOSITORY = 'flytrip-ci'
-        EKS_CLUSTER_NAME = 'fly-eks'
-
         PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${env.PATH}"
 
-        IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
+        AWS_REGION = 'us-east-1'
+        AWS_ACCOUNT_ID = '584612873567'
+
+        ECR_REPOSITORY = 'flytrip-ci'
+        ECR_URI = '584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci:latest'
+
+        EKS_CLUSTER_NAME = 'fly-eks'
     }
 
     stages {
 
-        stage('1. Checkout CD Repository') {
+        stage('1. Checkout') {
             steps {
                 checkout scm
             }
         }
 
-        stage('2. Verify Tools') {
+        stage('2. Check AWS CLI') {
             steps {
                 sh '''
-                    echo "========== AWS CLI =========="
+                    set -e
+
+                    echo "AWS location:"
+                    which aws
+
+                    echo "AWS version:"
                     aws --version
-
-                    echo "========== kubectl =========="
-                    kubectl version --client
-
-                    echo "========== Files =========="
-                    ls -la
-
-                    echo "========== IMAGE =========="
-                    echo ${IMAGE}
                 '''
             }
         }
 
-        stage('3. Verify AWS Connection') {
+        stage('3. Check AWS Connection') {
             steps {
                 sh '''
-                    echo "========== AWS ACCOUNT =========="
+                    set -e
+
+                    echo "AWS account:"
                     aws sts get-caller-identity
 
-                    echo "========== AWS REGION =========="
-                    aws configure get region || true
+                    echo "Region:"
+                    echo ${AWS_REGION}
                 '''
             }
         }
 
-        stage('4. Verify Image in ECR') {
+        stage('4. Check ECR') {
             steps {
                 sh '''
-                    echo "========== ECR IMAGE =========="
+                    set -e
+
+                    echo "Checking ECR repository..."
+
+                    aws ecr describe-repositories \
+                        --repository-names ${ECR_REPOSITORY} \
+                        --region ${AWS_REGION}
+
+                    echo "Checking image..."
 
                     aws ecr describe-images \
-                      --repository-name ${ECR_REPOSITORY} \
-                      --region ${AWS_REGION}
-
-                    echo "ECR repository:"
-                    echo ${ECR_REPOSITORY}
+                        --repository-name ${ECR_REPOSITORY} \
+                        --region ${AWS_REGION} \
+                        --query 'imageDetails[*].imageTags' \
+                        --output table
                 '''
             }
         }
@@ -68,23 +74,27 @@ pipeline {
         stage('5. Connect to EKS') {
             steps {
                 sh '''
-                    echo "========== CONNECTING TO EKS =========="
+                    set -e
+
+                    echo "Connecting to EKS..."
 
                     aws eks update-kubeconfig \
-                      --region ${AWS_REGION} \
-                      --name ${EKS_CLUSTER_NAME}
+                        --region ${AWS_REGION} \
+                        --name ${EKS_CLUSTER_NAME}
 
-                    echo "========== KUBERNETES NODES =========="
+                    echo "Testing Kubernetes..."
 
                     kubectl get nodes
                 '''
             }
         }
 
-        stage('6. Deploy Kubernetes Resources') {
+        stage('6. Deploy FlyTrip') {
             steps {
                 sh '''
-                    echo "========== DEPLOYING KUBERNETES =========="
+                    set -e
+
+                    echo "Applying Kubernetes files..."
 
                     kubectl apply -f deployment.yaml
                     kubectl apply -f service.yaml
@@ -92,36 +102,23 @@ pipeline {
             }
         }
 
-        stage('7. Update Application Image') {
+        stage('7. Wait for Deployment') {
             steps {
                 sh '''
-                    echo "========== DEPLOYING IMAGE =========="
-                    echo ${IMAGE}
-
-                    kubectl set image \
-                      deployment/flytrip \
-                      flytrip=${IMAGE}
-
-                    echo "Image updated successfully."
-                '''
-            }
-        }
-
-        stage('8. Wait for Deployment') {
-            steps {
-                sh '''
-                    echo "========== WAITING FOR DEPLOYMENT =========="
+                    set -e
 
                     kubectl rollout status \
-                      deployment/flytrip \
-                      --timeout=180s
+                        deployment/flytrip \
+                        --timeout=180s
                 '''
             }
         }
 
-        stage('9. Verify Deployment') {
+        stage('8. Verify') {
             steps {
                 sh '''
+                    set -e
+
                     echo "========== PODS =========="
                     kubectl get pods -o wide
 
@@ -129,11 +126,11 @@ pipeline {
                     kubectl get deployment flytrip
 
                     echo "========== SERVICE =========="
-                    kubectl get service flytrip-service
+                    kubectl get service flytrip
 
                     echo "========== IMAGE =========="
                     kubectl get deployment flytrip \
-                      -o jsonpath='{.spec.template.spec.containers[0].image}'
+                        -o jsonpath='{.spec.template.spec.containers[0].image}'
 
                     echo
                 '''
@@ -144,19 +141,27 @@ pipeline {
     post {
         success {
             echo '''
-==========================================
-FLYTRIP CD PASSED
-Application deployed successfully to EKS
-==========================================
+==================================================
+              FLYTRIP CD SUCCESS
+==================================================
+Jenkins Build Now completed successfully.
+
+ECR:
+584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci:latest
+
+EKS:
+fly-eks
+==================================================
 '''
         }
 
         failure {
             echo '''
-==========================================
-FLYTRIP CD FAILED
-Check the Jenkins stage that failed.
-==========================================
+==================================================
+              FLYTRIP CD FAILED
+==================================================
+Look at the FIRST stage that failed.
+==================================================
 '''
         }
     }
