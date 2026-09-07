@@ -2,182 +2,129 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION     = 'us-east-1'
-        AWS_ACCOUNT_ID = '584612873567'
-
+        AWS_REGION = 'us-east-1'
+        EKS_CLUSTER = 'fly-eks'
+        ECR_REGISTRY = '584612873567.dkr.ecr.us-east-1.amazonaws.com'
         ECR_REPOSITORY = 'flytrip-cd'
-        ECR_REGISTRY   = '584612873567.dkr.ecr.us-east-1.amazonaws.com'
-        IMAGE_NAME     = '584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-cd:latest'
+        IMAGE = '584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-cd:latest'
 
-        EKS_CLUSTER    = 'fly-eks'
+        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
     }
 
     stages {
 
-        stage('1. Checkout') {
+        stage('1. Verify FlyTrip Files') {
             steps {
-                echo '========================================'
-                echo 'FLYTRIP - CHECKOUT'
-                echo '========================================'
+                sh '''
+                    set -e
 
-                checkout scm
+                    echo "=========================================="
+                    echo "FLYTRIP - VERIFYING PROJECT FILES"
+                    echo "=========================================="
+
+                    test -f Jenkinsfile
+                    test -f deployment.yaml
+                    test -f service.yaml
+
+                    echo "Jenkinsfile found."
+                    echo "deployment.yaml found."
+                    echo "service.yaml found."
+                '''
             }
         }
 
         stage('2. Verify Tools') {
             steps {
                 sh '''
-                    set -eu
+                    set -e
 
-                    echo "========================================"
+                    echo "=========================================="
                     echo "FLYTRIP - VERIFYING TOOLS"
-                    echo "========================================"
+                    echo "=========================================="
 
-                    # Jenkins on macOS may not have Homebrew paths by default
-                    export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-
-                    echo ""
                     echo "Checking AWS CLI..."
-                    if ! command -v aws >/dev/null 2>&1; then
-                        echo "ERROR: AWS CLI was not found."
-                        echo "Expected locations:"
-                        echo "  /opt/homebrew/bin/aws"
-                        echo "  /usr/local/bin/aws"
-                        exit 1
-                    fi
+                    command -v aws
                     aws --version
 
-                    echo ""
                     echo "Checking kubectl..."
-                    if ! command -v kubectl >/dev/null 2>&1; then
-                        echo "ERROR: kubectl was not found."
-                        exit 1
-                    fi
+                    command -v kubectl
                     kubectl version --client
 
-                    echo ""
-                    echo "Checking AWS credentials..."
+                    echo "Checking AWS identity..."
                     aws sts get-caller-identity
 
-                    echo ""
-                    echo "All required tools are available."
+                    echo "Tools verified successfully."
                 '''
             }
         }
 
-        stage('3. Connect to EKS') {
+        stage('3. Connect to FlyTrip EKS') {
             steps {
                 sh '''
-                    set -eu
+                    set -e
 
-                    echo "========================================"
+                    echo "=========================================="
                     echo "FLYTRIP - CONNECTING TO EKS"
-                    echo "========================================"
-
-                    export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+                    echo "=========================================="
 
                     aws eks update-kubeconfig \
                         --region "$AWS_REGION" \
                         --name "$EKS_CLUSTER"
 
-                    echo ""
-                    echo "Connected to EKS cluster:"
-                    echo "$EKS_CLUSTER"
+                    kubectl config current-context
 
-                    echo ""
-                    kubectl cluster-info
+                    echo "Connected to EKS cluster: $EKS_CLUSTER"
                 '''
             }
         }
 
-        stage('4. Validate Kubernetes Files') {
+        stage('4. Deploy FlyTrip Kubernetes Resources') {
             steps {
                 sh '''
-                    set -eu
+                    set -e
 
-                    echo "========================================"
-                    echo "FLYTRIP - VALIDATING KUBERNETES FILES"
-                    echo "========================================"
-
-                    test -f deployment.yaml
-                    test -f service.yaml
-
-                    echo "deployment.yaml found."
-                    echo "service.yaml found."
-
-                    echo ""
-                    echo "Checking for old restaurant-company references..."
-
-                    if grep -R "restaurant-company" deployment.yaml service.yaml Jenkinsfile; then
-                        echo ""
-                        echo "ERROR: restaurant-company reference still exists."
-                        echo "Please remove it before deployment."
-                        exit 1
-                    fi
-
-                    echo ""
-                    echo "No restaurant-company references found."
-
-                    echo ""
-                    echo "Kubernetes manifests:"
-                    kubectl apply --dry-run=client -f deployment.yaml
-                    kubectl apply --dry-run=client -f service.yaml
-
-                    echo ""
-                    echo "Kubernetes files are valid."
-                '''
-            }
-        }
-
-        stage('5. Deploy FlyTrip Kubernetes Resources') {
-            steps {
-                sh '''
-                    set -eu
-
-                    echo "========================================"
+                    echo "=========================================="
                     echo "FLYTRIP - DEPLOYING KUBERNETES RESOURCES"
-                    echo "========================================"
+                    echo "=========================================="
 
                     kubectl apply -f deployment.yaml
                     kubectl apply -f service.yaml
 
                     echo ""
-                    echo "Kubernetes resources applied successfully."
+                    echo "FlyTrip Kubernetes resources applied successfully."
                 '''
             }
         }
 
-        stage('6. Update FlyTrip Application Image') {
+        stage('5. Update FlyTrip Application Image') {
             steps {
                 sh '''
-                    set -eu
+                    set -e
 
-                    echo "========================================"
+                    echo "=========================================="
                     echo "FLYTRIP - UPDATING APPLICATION IMAGE"
-                    echo "========================================"
+                    echo "=========================================="
 
-                    echo "Deployment: flytrip"
-                    echo "Container: flytrip"
-                    echo "Image:"
-                    echo "$IMAGE_NAME"
+                    echo "Deploying image:"
+                    echo "$IMAGE"
 
                     kubectl set image deployment/flytrip \
-                        flytrip="$IMAGE_NAME"
+                        flytrip="$IMAGE"
 
                     echo ""
-                    echo "Application image updated successfully."
+                    echo "FlyTrip application image updated successfully."
                 '''
             }
         }
 
-        stage('7. Wait for FlyTrip Deployment') {
+        stage('6. Wait for FlyTrip Deployment') {
             steps {
                 sh '''
-                    set -eu
+                    set -e
 
-                    echo "========================================"
+                    echo "=========================================="
                     echo "FLYTRIP - WAITING FOR DEPLOYMENT"
-                    echo "========================================"
+                    echo "=========================================="
 
                     kubectl rollout status deployment/flytrip \
                         --timeout=180s
@@ -188,16 +135,15 @@ pipeline {
             }
         }
 
-        stage('8. Final Verification') {
+        stage('7. Verify FlyTrip') {
             steps {
                 sh '''
-                    set -eu
+                    set -e
 
-                    echo "========================================"
+                    echo "=========================================="
                     echo "FLYTRIP - FINAL VERIFICATION"
-                    echo "========================================"
+                    echo "=========================================="
 
-                    echo ""
                     echo "Deployment:"
                     kubectl get deployment flytrip
 
@@ -210,9 +156,9 @@ pipeline {
                     kubectl get service flytrip-service
 
                     echo ""
-                    echo "========================================"
-                    echo "FLYTRIP DEPLOYMENT SUCCESSFUL!"
-                    echo "========================================"
+                    echo "=========================================="
+                    echo "FLYTRIP DEPLOYMENT SUCCESSFUL"
+                    echo "=========================================="
                 '''
             }
         }
@@ -220,12 +166,11 @@ pipeline {
 
     post {
         success {
-            echo 'FLYTRIP CI/CD PIPELINE FINISHED SUCCESSFULLY.'
+            echo 'FlyTrip CI/CD pipeline completed successfully.'
         }
 
         failure {
-            echo 'FLYTRIP CI/CD PIPELINE FAILED.'
-            echo 'Check the failed stage above for the exact error.'
+            echo 'FlyTrip CI/CD pipeline failed. Check the stage and console output above.'
         }
     }
 }
