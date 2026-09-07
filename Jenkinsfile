@@ -3,17 +3,17 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
-
         AWS_ACCOUNT_ID = '584612873567'
         ECR_REPOSITORY = 'flytrip-cd'
         EKS_CLUSTER_NAME = 'fly-eks'
 
+        AWS_CLI = '/opt/homebrew/bin/aws'
         IMAGE = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
     }
 
     stages {
 
-        stage('1. Checkout CD Repository') {
+        stage('1. Checkout FlyTrip CD Repository') {
             steps {
                 checkout scm
             }
@@ -29,17 +29,24 @@ pipeline {
                     echo "=========================================="
 
                     echo "Checking AWS CLI..."
-                    aws --version
+                    test -x "${AWS_CLI}"
+                    "${AWS_CLI}" sts get-caller-identity
 
+                    echo ""
                     echo "Checking kubectl..."
+                    command -v kubectl
                     kubectl version --client
 
-                    echo "Checking deployment files..."
+                    echo ""
+                    echo "Checking Kubernetes files..."
                     test -f deployment.yaml
                     test -f service.yaml
 
-                    ls -la
+                    echo ""
+                    echo "Files found:"
+                    ls -la deployment.yaml service.yaml
 
+                    echo ""
                     echo "Tools and files verified successfully."
                 '''
             }
@@ -54,13 +61,19 @@ pipeline {
                     echo "FLYTRIP - CONNECTING TO EKS"
                     echo "=========================================="
 
-                    aws eks update-kubeconfig \
-                      --region "${AWS_REGION}" \
-                      --name "${EKS_CLUSTER_NAME}"
+                    "${AWS_CLI}" eks update-kubeconfig \
+                        --region "${AWS_REGION}" \
+                        --name "${EKS_CLUSTER_NAME}"
 
+                    echo ""
+                    echo "Current Kubernetes context:"
+                    kubectl config current-context
+
+                    echo ""
                     echo "Testing Kubernetes connection..."
                     kubectl get nodes
 
+                    echo ""
                     echo "Connected to EKS cluster: ${EKS_CLUSTER_NAME}"
                 '''
             }
@@ -78,6 +91,7 @@ pipeline {
                     kubectl apply -f deployment.yaml
                     kubectl apply -f service.yaml
 
+                    echo ""
                     echo "FlyTrip Kubernetes resources applied successfully."
                 '''
             }
@@ -96,9 +110,10 @@ pipeline {
                     echo "${IMAGE}"
 
                     kubectl set image \
-                      deployment/flytrip \
-                      flytrip="${IMAGE}"
+                        deployment/flytrip \
+                        flytrip="${IMAGE}"
 
+                    echo ""
                     echo "FlyTrip application image updated successfully."
                 '''
             }
@@ -114,9 +129,10 @@ pipeline {
                     echo "=========================================="
 
                     kubectl rollout status \
-                      deployment/flytrip \
-                      --timeout=180s
+                        deployment/flytrip \
+                        --timeout=180s
 
+                    echo ""
                     echo "FlyTrip deployment completed successfully."
                 '''
             }
@@ -131,17 +147,21 @@ pipeline {
                     echo "FLYTRIP - FINAL VERIFICATION"
                     echo "=========================================="
 
-                    echo "========== PODS =========="
-                    kubectl get pods -l app=flytrip -o wide
-
+                    echo ""
                     echo "========== DEPLOYMENT =========="
                     kubectl get deployment flytrip
 
+                    echo ""
+                    echo "========== PODS =========="
+                    kubectl get pods -l app=flytrip -o wide
+
+                    echo ""
                     echo "========== SERVICE =========="
                     kubectl get service flytrip-service
 
+                    echo ""
                     echo "=========================================="
-                    echo "FLYTRIP DEPLOYMENT VERIFIED"
+                    echo "FLYTRIP DEPLOYMENT VERIFIED SUCCESSFULLY"
                     echo "=========================================="
                 '''
             }
@@ -162,7 +182,7 @@ Application deployed successfully to EKS
             echo '''
 ==========================================
 FLYTRIP DEPLOYMENT FAILED
-Check Jenkins logs and Kubernetes events
+Check Jenkins console output
 ==========================================
 '''
         }
