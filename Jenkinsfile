@@ -2,167 +2,237 @@ pipeline {
     agent any
 
     environment {
-        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${env.PATH}"
+        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${env.PATH}"
 
-        AWS_REGION = 'us-east-1'
-        AWS_ACCOUNT_ID = '584612873567'
+        AWS_REGION = "us-east-1"
+        EKS_CLUSTER = "fly-eks"
 
-        ECR_REPOSITORY = 'flytrip-ci'
-        ECR_URI = '584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci'
+        ECR_REGISTRY = "584612873567.dkr.ecr.us-east-1.amazonaws.com"
+        ECR_REPOSITORY = "flytrip-ci"
 
-        EKS_CLUSTER_NAME = 'fly-eks'
+        DEPLOYMENT_NAME = "flytrip"
     }
 
     stages {
 
         stage('1. Checkout') {
             steps {
+                echo 'Checking out FlyTrip CD repository...'
                 checkout scm
             }
         }
 
-        stage('2. Check AWS CLI') {
+        stage('2. Verify Tools') {
             steps {
                 sh '''
-                    set -e
+                    echo "========== VERIFY TOOLS =========="
 
-                    echo "AWS location:"
-                    which aws
-
-                    echo "AWS version:"
+                    echo "AWS CLI:"
                     aws --version
+
+                    echo "kubectl:"
+                    kubectl version --client
+
+                    echo "Git:"
+                    git --version
                 '''
             }
         }
 
-        stage('3. Check AWS Connection') {
+        stage('3. AWS Authentication') {
             steps {
-                sh '''
-                    set -e
-
-                    echo "AWS account:"
-                    aws sts get-caller-identity
-
-                    echo "Region:"
-                    echo ${AWS_REGION}
-                '''
+                withCredentials([
+                    aws(
+                        credentialsId: 'aws-credentials',
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        echo "========== AWS AUTHENTICATION =========="
+                        aws sts get-caller-identity
+                    '''
+                }
             }
         }
 
-        stage('4. Check ECR') {
+        stage('4. Connect to EKS') {
             steps {
-                sh '''
-                    set -e
+                withCredentials([
+                    aws(
+                        credentialsId: 'aws-credentials',
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        echo "========== CONNECT TO EKS =========="
 
-                    echo "Checking ECR repository..."
+                        aws eks update-kubeconfig \
+                            --region $AWS_REGION \
+                            --name $EKS_CLUSTER
 
-                    aws ecr describe-repositories \
-                        --repository-names ${ECR_REPOSITORY} \
-                        --region ${AWS_REGION}
+                        echo "Current context:"
+                        kubectl config current-context
 
-                    echo "Checking image..."
-
-                    aws ecr describe-images \
-                        --repository-name ${ECR_REPOSITORY} \
-                        --region ${AWS_REGION} \
-                        --query 'imageDetails[*].imageTags' \
-                        --output table
-                '''
+                        echo "Cluster nodes:"
+                        kubectl get nodes
+                    '''
+                }
             }
         }
 
-        stage('5. Connect to EKS') {
+        stage('5. Find Latest CI Image') {
             steps {
-                sh '''
-                    set -e
+                withCredentials([
+                    aws(
+                        credentialsId: 'aws-credentials',
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    script {
+                        env.IMAGE_TAG = sh(
+                            script: '''
+                                aws ecr describe-images \
+                                    --repository-name "$ECR_REPOSITORY" \
+                                    --region "$AWS_REGION" \
+                                    --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+                                    --output text
+                            ''',
+                            returnStdout: true
+                        ).trim()
 
-                    echo "Connecting to EKS..."
+                        if (!env.IMAGE_TAG || env.IMAGE_TAG == 'None') {
+                            error("No image tag found in ECR repository ${env.ECR_REPOSITORY}")
+                        }
 
-                    aws eks update-kubeconfig \
-                        --region ${AWS_REGION} \
-                        --name ${EKS_CLUSTER_NAME}
+                        env.FULL_IMAGE = "${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.IMAGE_TAG}"
 
-                    echo "Testing Kubernetes..."
-
-                    kubectl get nodes
-                '''
+                        echo "Deploying image:"
+                        echo "${env.FULL_IMAGE}"
+                    }
+                }
             }
         }
 
-        stage('6. Deploy FlyTrip') {
+        stage('6. Deploy Kubernetes Resources') {
             steps {
                 sh '''
-                    set -e
+                    echo "========== DEPLOY =========="
 
-                    echo "Applying Kubernetes files..."
+                    if [ -f namespace.yaml ]; then
+                        kubectl apply -f namespace.yaml
+                    fi
+
+                    if [ -f configmap.yaml ]; then
+                        kubectl apply -f configmap.yaml
+                    fi
+
+                    if [ -f secrets.yaml ]; then
+                        kubectl apply -f secrets.yaml
+                    fi
+
+                    if [ -f serviceaccount.yaml ]; then
+                        kubectl apply -f serviceaccount.yaml
+                    fi
 
                     kubectl apply -f deployment.yaml
-                    kubectl apply -f service.yaml
+
+                    if [ -f service.yaml ]; then
+                        kubectl apply -f service.yaml
+                    fi
+
+                    if [ -f networkpolicy.yaml ]; then
+                        kubectl apply -f networkpolicy.yaml
+                    fi
+
+                    if [ -f pdb.yaml ]; then
+                        kubectl apply -f pdb.yaml
+                    fi
+
+                    if [ -f hpa.yaml ]; then
+                        kubectl apply -f hpa.yaml
+                    fi
+
+                    if [ -f ingress.yaml ]; then
+                        kubectl apply -f ingress.yaml
+                    fi
                 '''
             }
         }
 
-        stage('7. Wait for Deployment') {
+        stage('7. Deploy CI Image') {
             steps {
                 sh '''
-                    set -e
+                    echo "========== UPDATE IMAGE =========="
+                    echo "Using: $FULL_IMAGE"
+
+                    kubectl set image \
+                        deployment/$DEPLOYMENT_NAME \
+                        flytrip=$FULL_IMAGE
+                '''
+            }
+        }
+
+        stage('8. Verify Rollout') {
+            steps {
+                sh '''
+                    echo "========== VERIFY ROLLOUT =========="
 
                     kubectl rollout status \
-                        deployment/flytrip \
-                        --timeout=180s
+                        deployment/$DEPLOYMENT_NAME \
+                        --timeout=300s
                 '''
             }
         }
 
-        stage('8. Verify') {
+        stage('9. Verify Deployment') {
             steps {
                 sh '''
-                    set -e
+                    echo "========== DEPLOYMENT =========="
+                    kubectl get deployment $DEPLOYMENT_NAME
 
                     echo "========== PODS =========="
                     kubectl get pods -o wide
 
-                    echo "========== DEPLOYMENT =========="
-                    kubectl get deployment flytrip
+                    echo "========== SERVICES =========="
+                    kubectl get services
 
-                    echo "========== SERVICE =========="
-                    kubectl get service flytrip
-
-                    echo "========== IMAGE =========="
-                    kubectl get deployment flytrip \
-                        -o jsonpath='{.spec.template.spec.containers[0].image}'
-
-                    echo
+                    echo "========== DEPLOYED IMAGE =========="
+                    kubectl get deployment $DEPLOYMENT_NAME \
+                        -o jsonpath='{.spec.template.spec.containers[0].image}{"\\n"}'
                 '''
             }
         }
     }
 
     post {
+
         success {
-            echo '''
-==================================================
-              FLYTRIP CD SUCCESS
-==================================================
-Jenkins Build Now completed successfully.
-
-ECR:
-584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci
-
-EKS:
-fly-eks
-==================================================
-'''
+            echo '=========================================='
+            echo 'FLYTRIP DEPLOYMENT SUCCESSFUL'
+            echo '=========================================='
         }
 
         failure {
-            echo '''
-==================================================
-              FLYTRIP CD FAILED
-==================================================
-Look at the FIRST stage that failed.
-==================================================
-'''
+            echo '=========================================='
+            echo 'FLYTRIP DEPLOYMENT FAILED'
+            echo '=========================================='
+
+            sh '''
+                echo "========== PODS =========="
+                kubectl get pods || true
+
+                echo "========== EVENTS =========="
+                kubectl get events \
+                    --sort-by=.metadata.creationTimestamp \
+                    | tail -30 || true
+            '''
+        }
+
+        always {
+            echo 'Pipeline finished.'
         }
     }
 }
