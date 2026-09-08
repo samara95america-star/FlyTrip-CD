@@ -14,6 +14,6 @@ spec:
     spec:
       containers:
         - name: flytrip
-          image: 584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci:a1e43dd78f84f53e38c98c0c9fd2e26b37b06598
+          image: 584612873567.dkr.ecr.us-east-1.amazonaws.com/flytrip-ci:latest
           ports:
             - containerPort: 8080
